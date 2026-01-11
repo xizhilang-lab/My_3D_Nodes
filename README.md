@@ -1,24 +1,75 @@
-My_3D_Nodes (ComfyUI 3D Pose Editor)
-一个用于 ComfyUI 的完全离线 3D 人物姿态编辑节点。 集成了本地动作库管理功能，支持将满意的动作永久保存到节点目录下的 JSON 文件中。
+# ComfyUI 3D Pose Editor (Offline & Lighting Enhanced)
 
-Cover Offline
+![Preview](preview.png)
 
-✨ 主要特色 (Features)
-完全离线 (Fully Offline)：内置 Three.js 引擎及模型文件，无需联网，无需 CDN，内网环境可用。
-本地动作库 (Local Storage)：
-动作数据直接保存到节点目录下的 saved_poses.json 文件中。
-重启 ComfyUI 不会丢失数据。
-支持保存、应用和删除动作。
-智能限制：动作库限制最大保存 60 个动作，满额后会提示清理，保持轻量。
-多角色支持：支持在同一场景中添加多个角色。
-ControlNet 友好：输出图像可直接连接 OpenPose 或 Depth 预处理器。
-📂 安装 (Installation)
-打开终端 (CMD) 并进入你的 ComfyUI 插件目录：
-cd ComfyUI/custom_nodes/
-克隆本仓库： code Bash git clone https://github.com/xizhilang-lab/My_3D_Nodes.git 重启 ComfyUI。 依赖说明：本插件不需要安装任何额外的 Python 库 (No pip install needed)。 🎮 使用指南 (Usage)
+A professional 3D posing node for ComfyUI. Fully offline capable, with local pose library and interactive studio lighting control. Designed for ControlNet (OpenPose/Depth) workflows.
 
-基础操作 旋转视角：鼠标左键 (Left Click) 拖动背景。 平移视角：鼠标右键 (Right Click) 拖动背景。 缩放视角：鼠标滚轮 (Scroll)。 调整姿态：点击人物身上的关节球，使用旋转轴调整。 移动人物：点击右侧“整体移动”按钮，或点击人物身体非关节部位。
-动作库管理 (Pose Library) 面板位于左上角，显示当前存储数量 (N/60)。数据保存在 saved_poses.json 中。 保存 (Save)：点击保存，输入名称。 应用 (Apply)：从下拉列表选择动作，点击应用。 删除 (Del)：选中不需要的动作，点击删除以释放空间。
-工具栏功能
-添加角色：增加新角色。
-移除角色：删除当前选中的角色。 一键落地：自动计算并修正人物位置，使其双脚贴地。 辅助参考线：切换显示网格和中心线。 重置 T-Pose：一键恢复初始姿态。 ⚠️ 文件说明 (Files) 请确保 web 文件夹内的以下文件完整，否则无法加载 3D 界面： Xbot.glb (3D 模型) three.module.js 等 JS 依赖文件
+一个专业的 ComfyUI 3D 姿态编辑节点。支持完全离线运行、本地动作库管理以及交互式影棚打光控制。专为 ControlNet (OpenPose/Depth) 工作流设计。
+
+---
+
+## ✨ Key Features (核心功能)
+
+*   **🌐 Fully Offline (完全离线)**:
+    *   All dependencies (Three.js, Models, Loaders) are embedded locally.
+    *   No internet connection or CDN required. Perfect for intranet/offline environments.
+    *   内置所有依赖库和模型，无须联网加载 CDN，完美支持离线/内网环境。
+
+*   **💡 Interactive Studio Lighting (交互式打光)**:
+    *   **New!** Moveable point light source (represented by a yellow sphere).
+    *   Create realistic shadows to enhance Depth map generation.
+    *   **新增！** 可移动的点光源（黄色球体），自由调整光照方向，生成真实投影以优化深度图效果。
+
+*   **💾 Local Pose Library (本地动作库)**:
+    *   Save up to 60 custom poses permanently to `saved_poses.json`.
+    *   One-click apply, save, and delete poses.
+    *   支持保存 60 个自定义动作到本地文件，一键应用、保存或删除。
+
+*   **🏃 Multi-Character Support (多角色支持)**:
+    *   Add multiple characters to the same scene.
+    *   Individual control for each character.
+    *   支持在同一场景中添加和控制多个角色。
+
+## 🛠️ Installation (安装)
+
+1.  Navigate to your ComfyUI custom nodes directory:
+    进入你的 ComfyUI 插件目录：
+    ```bash
+    cd ComfyUI/custom_nodes/
+    ```
+
+2.  Clone this repository:
+    克隆本仓库：
+    ```bash
+    git clone https://github.com/xizhilang-lab/My_3D_Nodes.git
+    ```
+
+3.  Restart ComfyUI.
+    重启 ComfyUI。
+
+## 🎮 Controls (操作指南)
+
+| Action (操作) | Mouse/Key (按键) | Description (说明) |
+| :--- | :--- | :--- |
+| **Rotate View (旋转视图)** | Left Click (Blank Area) | Drag on empty space to rotate camera. (空白处拖拽) |
+| **Select Body (选中身体)** | Left Click (Body) | Click character body to select. (点击角色身体) |
+| **Select Bone (选中骨骼)** | Left Click (Joint Sphere) | Click joint spheres to rotate limbs. (点击关节球旋转) |
+| **Move Light (移动灯光)** | Left Click (**Yellow Bulb 💡**) | Click the yellow sphere to move light source. (点击黄色灯泡球移动光源) |
+| **Toggle Coordinates (切换坐标)** | Key `R` | Switch between World/Local rotation space. (切换世界/本地坐标系) |
+| **Toggle Mode (切换模式)** | Key `T` | Switch between Rotate/Translate gizmo. (切换旋转/移动工具) |
+| **Deselect (取消选择)** | Key `ESC` | Deselect current object. (取消当前选中) |
+
+## 📸 Usage Tips (使用技巧)
+
+1.  **For ControlNet**: Connect the `image` output to a ControlNet Preprocessor (like Depth or OpenPose).
+    **配合 ControlNet**: 将 `image` 输出连接到 ControlNet 预处理器（如 Depth 或 OpenPose）。
+    
+2.  **Lighting**: Move the yellow light sphere to change shadow direction. This adds depth to your generated images.
+    **打光技巧**: 移动黄色灯光球改变阴影方向，这能为生成的图像增加体积感。
+
+3.  **Snapshot**: The output image is automatically generated whenever you release the mouse. The helper gizmos (bones, lights) are automatically hidden in the final output.
+    **自动截图**: 每次松开鼠标时自动生成输出图像。输出时会自动隐藏辅助线、骨骼球和光源球，只保留角色和阴影。
+
+## 📄 License
+
+MIT License.
