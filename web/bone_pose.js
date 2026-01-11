@@ -1,7 +1,5 @@
 import { app } from "/scripts/app.js";
 
-// 注意：这里不需要再定义 CDN 链接了，我们会动态获取本地链接
-
 const SKELETON_HTML = `
 <!DOCTYPE html>
 <html>
@@ -11,7 +9,7 @@ const SKELETON_HTML = `
         #loading { 
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
             color: #00FFD0; font-weight: bold; font-size: 16px; text-align: center;
-            display: none; z-index: 2000;
+            display: block; z-index: 2000;
         }
         #instruction { 
             position: absolute; bottom: 10px; left: 10px; color: #ccc; font-size: 12px; pointer-events: none; 
@@ -85,25 +83,25 @@ const SKELETON_HTML = `
 
     </style>
     
-    <!-- 关键修改：importmap 使用本地占位符 -->
+    <!-- 这里的 importmap 将由 JS 动态生成并注入 Blob URL -->
     <script type="importmap">
-        {
-            "imports": {
-                "three": "##URL_THREE##",
-                "three/addons/controls/OrbitControls.js": "##URL_ORBIT##",
-                "three/addons/loaders/GLTFLoader.js": "##URL_GLTF##",
-                "three/addons/controls/TransformControls.js": "##URL_TRANSFORM##"
-            }
+    {
+        "imports": {
+            "three": "##URL_THREE##",
+            "three/addons/controls/OrbitControls.js": "##URL_ORBIT##",
+            "three/addons/loaders/GLTFLoader.js": "##URL_GLTF##",
+            "three/addons/controls/TransformControls.js": "##URL_TRANSFORM##"
         }
+    }
     </script>
 </head>
 <body>
-    <div id="loading">正在加载模型...</div>
-    
+    <div id="loading">正在初始化组件...</div>
+
     <div id="instruction">
-        1. <b>点击身体</b> 选中角色并移动<br/>
+        1. <b>点击身体</b> 选中角色移动<br/>
         2. <b>点击关节球</b> 旋转骨骼<br/>
-        3. <b>一键落地</b> 让角色贴地<br/>
+        3. <b>点击黄球(💡)</b> 移动灯光<br/>
         4. <b>R键</b>: 切换世界/本地坐标
     </div>
 
@@ -115,7 +113,7 @@ const SKELETON_HTML = `
         <div class="guide-line gl-ch"></div>
         <div class="guide-line gl-cv"></div>
     </div>
-    
+
     <div id="pose-container">
         <div id="pose-header">
             <span id="pose-label">动作库 (File)</span>
@@ -132,8 +130,9 @@ const SKELETON_HTML = `
     <button id="btn-move-body" class="btn" style="top: 90px; border-color: #00FFD0; color: #00FFD0;">整体移动</button>
     <button id="btn-rotate-body" class="btn" style="top: 125px; border-color: #00FFD0; color: #00FFD0;">整体旋转</button>
     <button id="btn-land" class="btn" style="top: 160px; border-color: #FFFF00; color: #FFFF00;">一键落地</button>
-    <button id="btn-guides" class="btn" style="top: 195px;">辅助参考线</button>
-    <button id="btn-reset" class="btn" style="top: 230px;">重置T-Pose</button>
+    <button id="btn-reset-light" class="btn" style="top: 195px; border-color: #FFAA00; color: #FFAA00;">💡 重置灯光</button>
+    <button id="btn-guides" class="btn" style="top: 230px;">辅助参考线</button>
+    <button id="btn-reset" class="btn" style="top: 265px;">重置T-Pose</button>
 
     <script type="module">
         import * as THREE from 'three';
@@ -146,10 +145,14 @@ const SKELETON_HTML = `
         let activeCharIndex = -1; 
         let hoveredSelector = null;
         let isBodySelected = false; 
+        
+        // 灯光相关变量
+        let lightGroup, lightMesh, mainLight;
+        
         let raycaster = new THREE.Raycaster();
         let mouse = new THREE.Vector2();
 
-        // 这里的占位符会被 JS 替换成本地路径
+        // 这里的占位符会被 JS 替换成 Blob URL
         const MODEL_URL = '##URL_MODEL##';
         const CHAR_COLORS = [0xFFFFFF, 0xFF6666, 0x66FF66, 0x6666FF, 0xFFFF66, 0xFF66FF];
         const MAX_SAVED_POSES = 60; 
@@ -159,37 +162,63 @@ const SKELETON_HTML = `
         };
 
         function init() {
+            document.getElementById('loading').innerText = "加载场景...";
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x1a1a1a);
+            
+            // 场景基础配置
             grid = new THREE.GridHelper(20, 40, 0x333333, 0x111111);
+            // grid.receiveShadow = true; 
             scene.add(grid);
-            const ambient = new THREE.AmbientLight(0xffffff, 1.5);
+
+            // 添加一个透明的地面用来接收阴影
+            const planeGeometry = new THREE.PlaneGeometry(20, 20);
+            const planeMaterial = new THREE.ShadowMaterial({ opacity: 0.5, color: 0x000000 }); // 增加阴影不透明度
+            const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+            plane.rotation.x = -Math.PI / 2;
+            plane.receiveShadow = true;
+            scene.add(plane);
+
+            // 环境光 (大幅调暗，制造高对比度，让主光源更明显)
+            const ambient = new THREE.AmbientLight(0xffffff, 0.2); 
             scene.add(ambient);
-            const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
-            dirLight.position.set(5, 10, 7);
+
+            // 之前固定的方向光，现在大幅减弱作为补光，避免喧宾夺主
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.3);
+            dirLight.position.set(0, 10, 0);
             scene.add(dirLight);
+
+            setupControllableLight();
+
+            // 渲染器配置 (开启阴影)
             renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true; 
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
             renderer.capabilities.logarithmicDepthBuffer = true; 
             document.body.appendChild(renderer.domElement);
+
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 1000);
             camera.position.set(0, 1.5, 4.0); 
+            
             orbit = new OrbitControls(camera, renderer.domElement);
             orbit.enableDamping = true;
             orbit.dampingFactor = 0.05;
             orbit.target.set(0, 0.8, 0); 
             orbit.listenToKeyEvents(window);
             orbit.addEventListener('end', () => forceSnapshot());
+
             transformControl = new TransformControls(camera, renderer.domElement);
             transformControl.setMode('rotate'); 
             transformControl.space = 'local'; 
-            transformControl.size = 1.5; 
+            transformControl.size = 1.0; 
             transformControl.addEventListener('dragging-changed', function (event) {
                 orbit.enabled = !event.value;
                 if(!event.value) { savePose(); forceSnapshot(); }
             });
             scene.add(transformControl);
+
             renderer.domElement.addEventListener('pointerup', () => setTimeout(forceSnapshot, 1));
             renderer.domElement.addEventListener('wheel', () => {
                 if(window.wheelTimer) clearTimeout(window.wheelTimer);
@@ -210,12 +239,44 @@ const SKELETON_HTML = `
             document.getElementById('btn-land').addEventListener('click', landToFloor);
             document.getElementById('btn-guides').addEventListener('click', toggleGuides);
             document.getElementById('btn-reset').addEventListener('click', () => { resetPose(); forceSnapshot(); });
-            
+            document.getElementById('btn-reset-light').addEventListener('click', resetLight);
+
             initPoseUI();
             renderer.domElement.addEventListener('pointerdown', onPointerDown);
             renderer.domElement.addEventListener('pointermove', onPointerMove);
             setTimeout(() => { if(characters.length === 0) addCharacter(); }, 100);
             animate();
+        }
+
+        function setupControllableLight() {
+            // 创建一个组来包含灯光和可视化的球体
+            lightGroup = new THREE.Group();
+            lightGroup.position.set(2, 3, 3); // 默认位置
+
+            // 可视化球体 (黄色灯泡)
+            const sphereGeo = new THREE.SphereGeometry(0.15, 16, 16);
+            const sphereMat = new THREE.MeshBasicMaterial({ color: 0xFFD700 }); // 金色
+            lightMesh = new THREE.Mesh(sphereGeo, sphereMat);
+            lightMesh.userData = { isLightHelper: true };
+            lightGroup.add(lightMesh);
+
+            // 实际光源 - 增强亮度
+            // intensity 从 1.5 提升到 5.0，distance 增加到 100
+            mainLight = new THREE.PointLight(0xffffff, 5.0, 100);
+            mainLight.castShadow = true;
+            mainLight.shadow.mapSize.width = 2048;
+            mainLight.shadow.mapSize.height = 2048;
+            mainLight.shadow.bias = -0.0001;
+            lightGroup.add(mainLight);
+
+            scene.add(lightGroup);
+        }
+
+        function resetLight() {
+            lightGroup.position.set(2, 3, 3);
+            if(transformControl.object === lightGroup) transformControl.detach();
+            savePose();
+            forceSnapshot();
         }
 
         function initPoseUI() {
@@ -343,10 +404,20 @@ const SKELETON_HTML = `
 
         function addCharacter(existingData = null) {
             document.getElementById('loading').style.display = 'block';
+            document.getElementById('loading').innerText = "正在加载模型数据...";
             const loader = new GLTFLoader();
             loader.load(MODEL_URL, function (gltf) {
                 document.getElementById('loading').style.display = 'none';
                 const model = gltf.scene;
+                
+                // 开启模型的阴影投射
+                model.traverse(function (object) {
+                    if (object.isMesh) {
+                        object.castShadow = true;
+                        object.receiveShadow = true;
+                    }
+                });
+
                 const box = new THREE.Box3().setFromObject(model);
                 const size = box.getSize(new THREE.Vector3());
                 model.position.set(0,0,0);
@@ -380,7 +451,10 @@ const SKELETON_HTML = `
                     mesh.updateMatrixWorld(true);
                 }
                 savePose(); forceSnapshot();
-            }, undefined, function (error) { console.error(error); document.getElementById('loading').innerText = "加载失败"; });
+            }, undefined, function (error) { 
+                console.error("模型加载错误详情:", error); 
+                document.getElementById('loading').innerText = "加载失败: " + (error.message || "未知错误"); 
+            });
         }
 
         function removeLastCharacter() {
@@ -422,6 +496,7 @@ const SKELETON_HTML = `
 
         function deselectAll() {
             transformControl.detach(); resetAllSphereColors();
+            if(lightMesh) lightMesh.material.color.setHex(0xFFD700); // 重置灯光颜色
             hoveredSelector = null; isBodySelected = false; forceSnapshot(); 
         }
 
@@ -432,6 +507,17 @@ const SKELETON_HTML = `
         function onPointerMove(event) {
             if (transformControl.dragging) return;
             updateMouse(event); raycaster.setFromCamera(mouse, camera);
+            
+            // 检测灯光
+            const lightIntersects = raycaster.intersectObject(lightMesh);
+            if(lightIntersects.length > 0) {
+                 document.body.style.cursor = 'pointer';
+                 if(transformControl.object !== lightGroup) lightMesh.material.color.setHex(0xFFFFFF);
+                 return;
+            } else {
+                 if(transformControl.object !== lightGroup) lightMesh.material.color.setHex(0xFFD700);
+            }
+
             const allSelectors = getAllSelectors();
             const intersects = raycaster.intersectObjects(allSelectors, false);
             if (intersects.length > 0) {
@@ -460,6 +546,18 @@ const SKELETON_HTML = `
         function onPointerDown(event) {
             if (transformControl.dragging || transformControl.axis !== null) return;
             updateMouse(event); raycaster.setFromCamera(mouse, camera);
+            
+            // 1. 优先检测灯光
+            const lightIntersects = raycaster.intersectObject(lightMesh);
+            if(lightIntersects.length > 0 && event.button === 0) {
+                transformControl.attach(lightGroup);
+                transformControl.setMode('translate');
+                resetAllSphereColors();
+                lightMesh.material.color.setHex(0xFFFFFF); // 选中时变白
+                return;
+            }
+
+            // 2. 检测关节
             const allSelectors = getAllSelectors();
             const sphereIntersects = raycaster.intersectObjects(allSelectors, false);
             if (sphereIntersects.length > 0) {
@@ -471,18 +569,26 @@ const SKELETON_HTML = `
                         activeCharIndex = charId;
                         transformControl.attach(bone); transformControl.setMode('rotate'); isBodySelected = false;
                         resetAllSphereColors(); hitSphere.material.color.setHex(0xFF0000); hitSphere.material.opacity = 0.6; 
+                        if(lightMesh) lightMesh.material.color.setHex(0xFFD700);
                         setTimeout(forceSnapshot, 0);
                     }
                 }
                 return; 
             }
+
+            // 3. 检测身体
             const allMeshes = getAllMeshes();
             const meshIntersects = raycaster.intersectObjects(allMeshes, true);
             if (meshIntersects.length > 0) {
                  if(event.button === 0) {
                      let hitMesh = meshIntersects[0].object;
                      while(hitMesh && hitMesh.userData.charId === undefined && hitMesh.parent) hitMesh = hitMesh.parent;
-                     if(hitMesh && hitMesh.userData.charId !== undefined) { activeCharIndex = hitMesh.userData.charId; selectBody('translate'); return; }
+                     if(hitMesh && hitMesh.userData.charId !== undefined) { 
+                         activeCharIndex = hitMesh.userData.charId; 
+                         selectBody('translate');
+                         if(lightMesh) lightMesh.material.color.setHex(0xFFD700);
+                         return; 
+                     }
                  }
             }
             if(event.button === 0) deselectAll();
@@ -497,38 +603,70 @@ const SKELETON_HTML = `
         function forceSnapshot() {
             const gizmoVisible = transformControl.visible;
             const gridVisible = grid.visible;
-            transformControl.visible = false; grid.visible = false;
+            // 截图前隐藏 gizmo、网格和灯光辅助球
+            transformControl.visible = false; 
+            grid.visible = false;
+            if(lightMesh) lightMesh.visible = false;
+
             const allSelectors = getAllSelectors(); allSelectors.forEach(s => s.visible = false);
+            
             renderer.render(scene, camera);
             const url = renderer.domElement.toDataURL("image/jpeg", 0.95);
             window.parent.postMessage({ type: 'UPDATE_IMAGE', img: url }, '*');
-            transformControl.visible = gizmoVisible; grid.visible = gridVisible;
+            
+            // 恢复可见性
+            transformControl.visible = gizmoVisible; 
+            grid.visible = gridVisible;
+            if(lightMesh) lightMesh.visible = true;
             allSelectors.forEach(s => s.visible = true);
             renderer.render(scene, camera);
         }
 
         function savePose() {
-            const poseData = characters.map(c => {
+            const charData = characters.map(c => {
                 const bones = {};
                 c.mesh.skeleton.bones.forEach(bone => { bones[bone.name] = bone.quaternion.toArray(); });
                 return { pos: c.model.position.toArray(), rot: c.model.quaternion.toArray(), bones: bones };
             });
-            window.parent.postMessage({ type: 'UPDATE_POSE', pose: JSON.stringify(poseData) }, '*');
+
+            // 新的数据结构，包含灯光信息
+            const saveData = {
+                version: 2,
+                light: lightGroup ? lightGroup.position.toArray() : [2,3,3],
+                chars: charData
+            };
+
+            window.parent.postMessage({ type: 'UPDATE_POSE', pose: JSON.stringify(saveData) }, '*');
         }
 
         function loadPoseFromState(jsonString) {
             if(!jsonString || jsonString === "{}") return;
             try {
-                let data = JSON.parse(jsonString);
-                if(!Array.isArray(data)) {
-                    const single = { bones: {}, pos: [0,0,0], rot: [0,0,0,1] };
-                    for(let k in data) {
-                        if(k === '__root_position__') single.pos = data[k];
-                        else if(k === '__root_rotation__') single.rot = data[k];
-                        else single.bones[k] = data[k];
+                let parsed = JSON.parse(jsonString);
+                let charDataArray = [];
+
+                // 兼容旧版本 (旧版本直接是数组)
+                if(Array.isArray(parsed)) {
+                    charDataArray = parsed;
+                } else if (parsed.chars) {
+                    // 新版本
+                    charDataArray = parsed.chars;
+                    if(parsed.light && lightGroup) {
+                        lightGroup.position.fromArray(parsed.light);
                     }
-                    data = [single];
+                } else {
+                    // 处理单个对象的旧旧版本
+                    const single = { bones: {}, pos: [0,0,0], rot: [0,0,0,1] };
+                    for(let k in parsed) {
+                         if(k === '__root_position__') single.pos = parsed[k];
+                         else if(k === '__root_rotation__') single.rot = parsed[k];
+                         else single.bones[k] = parsed[k];
+                    }
+                    charDataArray = [single];
                 }
+
+                // 加载角色
+                const data = charDataArray;
                 while(characters.length > data.length) removeLastCharacter();
                 for(let i=0; i<characters.length; i++) {
                     const char = characters[i]; const d = data[i];
@@ -579,38 +717,107 @@ app.registerExtension({
             nodeType.prototype.onNodeCreated = function () {
                 const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
                 const node = this;
-                node.setSize([500, 600]); 
+                node.setSize([500, 600]);
+
                 const createHidden = (name) => {
                     let w = node.widgets.find(w => w.name === name);
                     if (!w) {
                         w = node.addWidget("text", name, "", () => {}, {});
-                        w.computeSize = () => [0, -4]; 
-                        if(w.inputEl) w.inputEl.style.display = "none";
+                        w.computeSize = () => [0, -4];
+                        if (w.inputEl) w.inputEl.style.display = "none";
                     }
                     return w;
                 };
+
                 const snapshotWidget = createHidden("snapshot");
                 const poseDataWidget = createHidden("pose_data");
 
-                // ★★★ 核心修改：动态获取本地文件 URL ★★★
-                const urlModel = new URL("./Xbot.glb", import.meta.url).href;
-                const urlThree = new URL("./three.module.js", import.meta.url).href;
-                const urlOrbit = new URL("./OrbitControls.js", import.meta.url).href;
-                const urlGLTF = new URL("./GLTFLoader.js", import.meta.url).href;
-                const urlTransform = new URL("./TransformControls.js", import.meta.url).href;
+                // 获取基础文件 URL
+                const urlModelRaw = new URL("./Xbot.glb", import.meta.url).href;
+                const urlThreeRaw = new URL("./three.module.js", import.meta.url).href;
+                const urlOrbitRaw = new URL("./OrbitControls.js", import.meta.url).href;
+                const urlGLTFRaw = new URL("./GLTFLoader.js", import.meta.url).href;
+                const urlTransformRaw = new URL("./TransformControls.js", import.meta.url).href;
+                const urlBufferRaw = new URL("./BufferGeometryUtils.js", import.meta.url).href;
 
-                // 替换 HTML 中的占位符
-                let finalHtml = SKELETON_HTML.replace("##URL_MODEL##", urlModel);
-                finalHtml = finalHtml.replace("##URL_THREE##", urlThree);
-                finalHtml = finalHtml.replace("##URL_ORBIT##", urlOrbit);
-                finalHtml = finalHtml.replace("##URL_GLTF##", urlGLTF);
-                finalHtml = finalHtml.replace("##URL_TRANSFORM##", urlTransform);
+                // 辅助函数：拉取文件文本内容
+                const fetchText = async (url) => {
+                    const resp = await fetch(url);
+                    if (!resp.ok) throw new Error(`Failed to load ${url}`);
+                    return await resp.text();
+                };
 
+                // 辅助函数：创建 Text Blob URL
+                const createBlobUrl = (content, type = 'application/javascript') => {
+                    return URL.createObjectURL(new Blob([content], { type: type }));
+                };
+
+                // 创建 iframe 容器
                 const iframe = document.createElement("iframe");
                 iframe.style.width = "100%";
                 iframe.style.height = "100%";
                 iframe.style.border = "none";
-                iframe.src = URL.createObjectURL(new Blob([finalHtml], {type: "text/html"}));
+
+                // ★★★ 核心修复逻辑：动态加载并重写所有 JS 依赖 ★★★
+                (async () => {
+                    try {
+                        // 1. 加载 three.module.js
+                        const threeContent = await fetchText(urlThreeRaw);
+                        const threeBlobUrl = createBlobUrl(threeContent);
+
+                        // 2. 加载并重写 BufferGeometryUtils.js (依赖 three)
+                        let bufferContent = await fetchText(urlBufferRaw);
+                        bufferContent = bufferContent.replace(/from\s+['"]three['"]/g, `from '${threeBlobUrl}'`);
+                        const bufferBlobUrl = createBlobUrl(bufferContent);
+
+                        // 3. 加载并重写 GLTFLoader.js
+                        let gltfContent = await fetchText(urlGLTFRaw);
+                        gltfContent = gltfContent.replace(/from\s+['"]three['"]/g, `from '${threeBlobUrl}'`);
+                        gltfContent = gltfContent.replace(/from\s+['"].*\/BufferGeometryUtils\.js['"]/g, `from '${bufferBlobUrl}'`);
+                        const gltfBlobUrl = createBlobUrl(gltfContent);
+
+                        // 4. 加载并重写 Controls
+                        let orbitContent = await fetchText(urlOrbitRaw);
+                        orbitContent = orbitContent.replace(/from\s+['"]three['"]/g, `from '${threeBlobUrl}'`);
+                        const orbitBlobUrl = createBlobUrl(orbitContent);
+
+                        let transformContent = await fetchText(urlTransformRaw);
+                        transformContent = transformContent.replace(/from\s+['"]three['"]/g, `from '${threeBlobUrl}'`);
+                        const transformBlobUrl = createBlobUrl(transformContent);
+
+                        // 5. 加载模型 Blob
+                        let modelBlobUrl = urlModelRaw;
+                        try {
+                            const modelResp = await fetch(urlModelRaw);
+                            if(modelResp.ok) {
+                                const blob = await modelResp.blob();
+                                modelBlobUrl = URL.createObjectURL(blob);
+                            }
+                        } catch(e) { console.warn("Model fetch failed, using raw url"); }
+
+                        // 6. 组装 HTML
+                        let finalHtml = SKELETON_HTML;
+                        finalHtml = finalHtml.replace("##URL_MODEL##", modelBlobUrl);
+                        finalHtml = finalHtml.replace("##URL_THREE##", threeBlobUrl);
+                        finalHtml = finalHtml.replace("##URL_ORBIT##", orbitBlobUrl);
+                        finalHtml = finalHtml.replace("##URL_GLTF##", gltfBlobUrl);
+                        finalHtml = finalHtml.replace("##URL_TRANSFORM##", transformBlobUrl);
+
+                        // 设置 iframe 内容
+                        iframe.src = URL.createObjectURL(new Blob([finalHtml], {type: "text/html"}));
+                        
+                        iframe.onload = () => {
+                            setTimeout(() => {
+                                iframe.contentWindow.postMessage({ type: 'INIT_POSE', pose: poseDataWidget.value }, '*');
+                            }, 100);
+                        };
+
+                    } catch (err) {
+                        console.error("[3D Pose] Critical Error initializing components:", err);
+                        const errHtml = `<div style="color:red; padding:20px;">Component Load Error: ${err.message}<br/>Check console for details.</div>`;
+                        iframe.src = URL.createObjectURL(new Blob([errHtml], {type: "text/html"}));
+                    }
+                })();
 
                 const widget = node.addDOMWidget("3d_editor", "editor", iframe, {
                     getValue() { return "" }, setValue(v) {}
@@ -624,9 +831,6 @@ app.registerExtension({
                     }
                 });
 
-                iframe.onload = () => {
-                     iframe.contentWindow.postMessage({ type: 'INIT_POSE', pose: poseDataWidget.value }, '*');
-                };
                 return r;
             };
         }

@@ -11,6 +11,7 @@ from aiohttp import web
 # ==============================================================================
 # 路径配置：动作文件将保存在当前节点目录下
 # ==============================================================================
+# 修复：使用 __file__ 获取当前文件路径
 POSES_FILE = os.path.join(os.path.dirname(__file__), "saved_poses.json")
 MAX_POSES = 60  # 限制最大数量
 
@@ -43,7 +44,7 @@ async def save_pose(request):
         req_data = await request.json()
         name = req_data.get("name")
         pose_data = req_data.get("data")
-        
+
         if not name or not pose_data:
             return web.Response(status=400, text="Missing name or data")
             
@@ -67,7 +68,7 @@ async def delete_pose(request):
     try:
         req_data = await request.json()
         name = req_data.get("name")
-        
+
         current_poses = load_poses_file()
         if name in current_poses:
             del current_poses[name]
@@ -91,7 +92,7 @@ class ThreeD_Human_Pose:
                 "zoom": ("FLOAT", {"default": 5.0, "min": 0.5, "max": 100.0, "step": 0.1}),
             },
             "hidden": {
-                "snapshot": ("STRING", {"default": ""}), 
+                "snapshot": ("STRING", {"default": ""}),
                 "prompt_output": ("STRING", {"default": ""}),
             }
         }
@@ -147,7 +148,6 @@ class ThreeD_Human_Pose:
         final_prompt = self.get_calc_prompt(horizontal_angle, vertical_angle, zoom)
         return (img_tensor, final_prompt)
 
-
 # ==============================================================================
 # 节点 2: 3D Skeleton Posing
 # ==============================================================================
@@ -156,11 +156,11 @@ class ThreeD_Bone_Pose:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "mode": (["Pose Edit", "View Only"],), 
+                "mode": (["Pose Edit", "View Only"],),
             },
             "optional": {
-                "snapshot": ("STRING", {"default": "", "multiline": False}), 
-                "pose_data": ("STRING", {"default": "{}", "multiline": False}), 
+                "snapshot": ("STRING", {"default": "", "multiline": False}),
+                "pose_data": ("STRING", {"default": "{}", "multiline": False}),
             }
         }
 
@@ -192,12 +192,12 @@ class ThreeD_Bone_Pose:
 # ==============================================================================
 # 注册映射
 # ==============================================================================
-NODE_CLASS_MAPPINGS = { 
+NODE_CLASS_MAPPINGS = {
     "ThreeD_Human_Pose": ThreeD_Human_Pose,
-    "ThreeD_Bone_Pose": ThreeD_Bone_Pose 
+    "ThreeD_Bone_Pose": ThreeD_Bone_Pose
 }
 
-NODE_DISPLAY_NAME_MAPPINGS = { 
+NODE_DISPLAY_NAME_MAPPINGS = {
     "ThreeD_Human_Pose": "3D Cinematic Pose",
     "ThreeD_Bone_Pose": "3D Skeleton Posing"
 }
